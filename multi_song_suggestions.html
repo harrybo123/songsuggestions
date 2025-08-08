@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Song Suggestions</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    body { background:#0b0f17; color:#e8eef9; margin:0; display:grid; min-height:100vh; place-items:center; }
+    .card { width:min(780px,94vw); background:#111827; border:1px solid #1f2937; border-radius:18px; padding:24px; box-shadow:0 10px 30px rgba(0,0,0,.4); }
+    h1 { margin:0 0 8px; font-size:1.6rem; }
+    p.sub { margin:0 0 18px; color:#9fb0c9; }
+    label { display:block; font-size:.9rem; color:#b9c7dc; margin:10px 0 6px; }
+    input { width:100%; padding:12px 14px; border-radius:12px; border:1px solid #2a3b53; background:#0f1623; color:#e8eef9; outline:none; box-sizing:border-box; }
+    input:focus { border-color:#4f8cff; box-shadow:0 0 0 3px rgba(79,140,255,.22); }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .song-row { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; margin-top:10px; }
+    .song-row button { height:44px; }
+    .muted { color:#94a3b8; font-size:.9rem; }
+    .actions { display:flex; gap:10px; align-items:center; margin-top:16px; flex-wrap:wrap; }
+    button { border:0; border-radius:12px; padding:12px 16px; font-weight:600; background:#4f8cff; color:white; cursor:pointer; }
+    button.secondary { background:#1f2937; color:#e5e7eb; border:1px solid #334155; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    #status.ok { color:#7ee787; }
+    #status.err { color:#ff8585; }
+    .hp { position:absolute; left:-9999px; opacity:0; width:0; height:0; }
+
+    /* Success overlay with animated checkmark */
+    .overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(0,0,0,.55); backdrop-filter: blur(2px); }
+    .overlay.show { display: grid; }
+    .success-card { background:#0b1220; border:1px solid #1f2937; border-radius:20px; padding:28px; text-align:center; min-width: 260px; box-shadow:0 20px 60px rgba(0,0,0,.55); animation: pop .2s ease-out; }
+    @keyframes pop { from { transform: scale(.96); opacity: .6; } to { transform: scale(1); opacity: 1; } }
+    .check { width: 84px; height: 84px; margin: 0 auto 10px; display:block; }
+    .check path { stroke: #7ee787; stroke-width: 8; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 120; stroke-dashoffset: 120; animation: draw .65s ease-out forwards; }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    .thanks { font-size: 1.2rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Suggest a Song</h1>
+    <p class="sub">Add one or more songs — they’ll go straight into the Google Sheet as separate rows.</p>
+
+    <form id="songForm" novalidate>
+      <input class="hp" type="text" name="website" autocomplete="off" tabindex="-1" />
+
+      <label for="name">Your name</label>
+      <input id="name" name="name" placeholder="e.g., Harry" maxlength="60" required />
+
+      <div id="songs"></div>
+
+      <div class="actions">
+        <button id="addRowBtn" type="button" class="secondary">+ Add another song</button>
+        <button id="submitBtn" type="submit">Submit</button>
+        <span class="muted" id="status"></span>
+      </div>
+
+      <p class="muted">Tip: You can add several songs at once — each will become its own row. <br>Artist is optional.</p>
+    </form>
+  </main>
+
+  <!-- Success overlay -->
+  <div id="overlay" class="overlay" aria-hidden="true">
+    <div class="success-card">
+      <svg class="check" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M16 34 L28 46 L48 20"></path>
+      </svg>
+      <div class="thanks" id="thanksMsg">Thanks!</div>
+    </div>
+  </div>
+
+  <script>
+    const scriptURL = "https://script.google.com/macros/s/AKfycbxrZwvMvYgAF3z41cLZxnGiuqMQLhCxbW-NOOkS_e4ogJbK4i0h9zZTrTetoZdEeMHUGA/exec";
+
+    const form    = document.getElementById("songForm");
+    const songsEl = document.getElementById("songs");
+    const addBtn  = document.getElementById("addRowBtn");
+    const status  = document.getElementById("status");
+    const btn     = document.getElementById("submitBtn");
+    const overlay = document.getElementById("overlay");
+    const thanks  = document.getElementById("thanksMsg");
+
+    function showStatus(msg, cls="") { status.className = cls; status.textContent = msg; }
+
+    function makeSongRow() {
+      const wrap = document.createElement("div");
+      wrap.className = "song-row";
+      wrap.innerHTML = `
+        <div>
+          <label>Song title</label>
+          <input name=\"song\" placeholder=\"e.g., Believer\" maxlength=\"120\" required />
+        </div>
+        <div>
+          <label>Artist (optional)</label>
+          <input name=\"artist\" placeholder=\"e.g., Imagine Dragons\" maxlength=\"120\" />
+        </div>
+        <button type=\"button\" class=\"secondary remove\">Remove</button>
+      `;
+      const removeBtn = wrap.querySelector(".remove");
+      removeBtn.addEventListener("click", () => {
+        if ([...songsEl.querySelectorAll(".song-row")].length > 1) {
+          wrap.remove();
+        } else {
+          wrap.querySelector('input[name="song"]').value = "";
+          wrap.querySelector('input[name="artist"]').value = "";
+        }
+      });
+      return wrap;
+    }
+
+    function ensureOneRow() {
+      if (!songsEl.querySelector(".song-row")) {
+        songsEl.appendChild(makeSongRow());
+      }
+    }
+    ensureOneRow();
+
+    addBtn.addEventListener("click", () => {
+      songsEl.appendChild(makeSongRow());
+      songsEl.lastElementChild.querySelector('input[name="song"]').focus();
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (form.website && form.website.value.trim() !== "") { showStatus("Bot detected.", "err"); return; }
+
+      const name = form.name.value.trim();
+      if (!name) { showStatus("Please enter your name.", "err"); return; }
+
+      const rows = [...songsEl.querySelectorAll(".song-row")].map(row => {
+        const song = row.querySelector('input[name="song"]').value.trim();
+        const artist = row.querySelector('input[name="artist"]').value.trim();
+        return { song, artist };
+      }).filter(r => r.song); // only require song title; artist may be empty
+
+      if (!rows.length) { showStatus("Please add at least one song title.", "err"); return; }
+
+      btn.disabled = true; addBtn.disabled = true; showStatus("Sending...");
+
+      try {
+        const fd = new FormData();
+        fd.append("name", name);
+        for (const {song, artist} of rows) {
+          fd.append("song", song);
+          fd.append("artist", artist); // may be ""
+        }
+
+        const res = await fetch(scriptURL, { method: "POST", body: fd });
+        let ok = res.ok;
+        try { const data = await res.clone().json(); ok = ok || (data && data.status === "success"); } catch {}
+        if (!ok) throw new Error("Bad response");
+
+        thanks.textContent = `Thanks, ${name}!`;
+        overlay.classList.add("show");
+        overlay.setAttribute("aria-hidden", "false");
+
+        setTimeout(() => {
+          overlay.classList.remove("show");
+          overlay.setAttribute("aria-hidden", "true");
+          songsEl.innerHTML = ""; // clear songs but keep name for quick additional entries
+          ensureOneRow();
+          showStatus("");
+        }, 2000);
+      } catch (err) {
+        console.error(err);
+        showStatus("Couldn’t submit. Re-check deployment access & tab name.", "err");
+      } finally {
+        btn.disabled = false; addBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
